@@ -49,6 +49,15 @@ local THEMES = {
         TextDim = Color3.fromRGB(200, 180, 200),
         Accent = Color3.fromRGB(180, 0, 255),
     },
+    Branco = {
+        Background = Color3.fromRGB(240, 240, 240),
+        Surface = Color3.fromRGB(255, 255, 255),
+        Primary = Color3.fromRGB(80, 80, 80),
+        PrimaryLight = Color3.fromRGB(120, 120, 120),
+        Text = Color3.fromRGB(0, 0, 0),
+        TextDim = Color3.fromRGB(80, 80, 80),
+        Accent = Color3.fromRGB(180, 180, 180),
+    },
 }
 
 local currentTheme = "Vinho"
@@ -59,17 +68,24 @@ local CONFIG = {
     ToggleKey = Enum.KeyCode.P,
     
     ExtraHit = {
-        Event = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Punch"),
+        Event = ReplicatedStorage:FindFirstChild("Events") and ReplicatedStorage.Events:FindFirstChild("Punch") or nil,
         Args = {0, 0.1, 1},
         Cooldown = 0,
     },
     
     MetalSkin = {
+        Enabled = false,
         Key = Enum.KeyCode.R,
-        Event = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Transform"),
+        Event = ReplicatedStorage:FindFirstChild("Events") and ReplicatedStorage.Events:FindFirstChild("Transform") or nil,
         Cooldown = 2,
         LastUse = 0,
-        Active = false,
+    },
+    
+    RealJump = {
+        Enabled = false,
+        Key = Enum.KeyCode.LeftAlt,  -- Alt esquerdo
+        Cooldown = 0.5,
+        LastUse = 0,
     },
     
     ESP = {
@@ -87,10 +103,10 @@ local CONFIG = {
     AllowMouseButtons = true,
 }
 
--- ==================== VARIÁVEIS ====================
+-- ==================== VARIÁVEIS GLOBAIS ====================
 local uiOpen = true
 local selectedKey = nil
-local keyChangeMode = false
+local keyChangeModeExtra = false
 local lastExtraHitTime = 0
 local uiElements = {}
 local espBoxHighlights = {}
@@ -150,27 +166,75 @@ local function updateKeyDisplay()
 end
 
 local function sendExtraHit()
-    if not selectedKey then return end
+    if not selectedKey or not CONFIG.ExtraHit.Event then return end
     local now = tick()
     if now - lastExtraHitTime < CONFIG.ExtraHit.Cooldown then return end
     lastExtraHitTime = now
-    if not player.Character or not player.Character:FindFirstChild("Humanoid") then return end
     pcall(function()
         CONFIG.ExtraHit.Event:FireServer(unpack(CONFIG.ExtraHit.Args))
     end)
 end
 
 local function toggleMetalSkin()
+    if not CONFIG.MetalSkin.Event then return end
     local now = tick()
     if now - CONFIG.MetalSkin.LastUse < CONFIG.MetalSkin.Cooldown then return end
     CONFIG.MetalSkin.LastUse = now
-    CONFIG.MetalSkin.Active = not CONFIG.MetalSkin.Active
+    CONFIG.MetalSkin.Enabled = not CONFIG.MetalSkin.Enabled
+    -- Atualiza o toggle na interface
+    if uiElements.MetalToggleBtn then
+        uiElements.MetalToggleBtn.Text = CONFIG.MetalSkin.Enabled and "ON" or "OFF"
+        uiElements.MetalToggleBtn.BackgroundColor3 = CONFIG.MetalSkin.Enabled and COLORS.Accent or COLORS.Surface
+    end
     pcall(function()
-        CONFIG.MetalSkin.Event:FireServer("metalSkin", CONFIG.MetalSkin.Active)
+        CONFIG.MetalSkin.Event:FireServer("metalSkin", CONFIG.MetalSkin.Enabled)
     end)
 end
 
--- ==================== FUNÇÃO DE APLICAÇÃO DE TEMA (REFATORADA) ====================
+local function doRealJump()
+    if not CONFIG.RealJump.Enabled then return end
+    local now = tick()
+    if now - CONFIG.RealJump.LastUse < CONFIG.RealJump.Cooldown then return end
+    CONFIG.RealJump.LastUse = now
+    if player.Character and player.Character:FindFirstChild("Humanoid") then
+        player.Character.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+    end
+end
+
+-- ==================== FUNÇÃO DE TROCA DE TECLA (EXTRA HIT) ====================
+local function startKeyChange()
+    if keyChangeModeExtra then return end
+    keyChangeModeExtra = true
+    uiElements.KeyValue.Text = "Pressione uma tecla..."
+    uiElements.KeyValue.TextColor3 = COLORS.Accent
+
+    local connection
+    connection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed or not keyChangeModeExtra then return end
+        if input.KeyCode == CONFIG.ToggleKey then return end
+
+        if input.UserInputType == Enum.UserInputType.Keyboard then
+            selectedKey = input.KeyCode
+            uiElements.KeyValue.Text = getFriendlyInputName(input)
+        elseif CONFIG.AllowMouseButtons and (
+            input.UserInputType == Enum.UserInputType.MouseButton1 or
+            input.UserInputType == Enum.UserInputType.MouseButton2 or
+            input.UserInputType == Enum.UserInputType.MouseButton3 or
+            input.UserInputType == Enum.UserInputType.MouseButton4 or
+            input.UserInputType == Enum.UserInputType.MouseButton5) then
+            selectedKey = input.UserInputType
+            uiElements.KeyValue.Text = getFriendlyInputName(input)
+        else
+            return
+        end
+
+        uiElements.KeyValue.TextColor3 = COLORS.Text
+        keyChangeModeExtra = false
+        connection:Disconnect()
+    end)
+end
+
+-- ==================== APLICAÇÃO DE TEMA ====================
 local function applyTheme(themeName)
     currentTheme = themeName
     COLORS = THEMES[themeName]
@@ -180,58 +244,22 @@ local function applyTheme(themeName)
     local main = uiElements.MainFrame
     main.BackgroundColor3 = COLORS.Background
     
-    -- Título principal
     local title = main:FindFirstChild("TitleLabel")
     if title then title.TextColor3 = COLORS.Primary end
     
-    -- Linhas divisoras
     for _, child in ipairs(main:GetChildren()) do
         if child:IsA("Frame") and child.Name == "Line" then
             child.BackgroundColor3 = COLORS.Primary
         end
     end
     
-    -- Card Extra Hit
     local extraCard = main:FindFirstChild("ExtraCard")
     if extraCard then
         extraCard.BackgroundColor3 = COLORS.Surface
         local extraTitle = extraCard:FindFirstChild("ExtraTitle")
         if extraTitle then extraTitle.TextColor3 = COLORS.Primary end
-        
-        -- Botões dentro do card
-        local btnRow1 = extraCard:FindFirstChild("BtnRow1")
-        if btnRow1 then
-            for _, btn in ipairs(btnRow1:GetChildren()) do
-                if btn:IsA("TextButton") then
-                    if btn.Name == "ResetBtn" then
-                        btn.BorderColor3 = COLORS.Primary
-                        btn.BackgroundColor3 = COLORS.Surface
-                        btn.TextColor3 = COLORS.Text
-                    else
-                        btn.BackgroundColor3 = COLORS.Primary
-                        btn.TextColor3 = COLORS.Text
-                    end
-                end
-            end
-        end
-        
-        -- Área do cooldown
-        local cooldownArea = extraCard:FindFirstChild("CooldownArea")
-        if cooldownArea then
-            local cooldownLabel = cooldownArea:FindFirstChild("CooldownLabel")
-            if cooldownLabel then cooldownLabel.TextColor3 = COLORS.TextDim end
-            local cooldownValue = cooldownArea:FindFirstChild("CooldownValue")
-            if cooldownValue then cooldownValue.TextColor3 = COLORS.Text end
-            for _, btn in ipairs(cooldownArea:GetChildren()) do
-                if btn:IsA("TextButton") then
-                    btn.BackgroundColor3 = COLORS.Primary
-                    btn.TextColor3 = COLORS.Text
-                end
-            end
-        end
     end
     
-    -- Card Metal Skin
     local metalCard = main:FindFirstChild("MetalCard")
     if metalCard then
         metalCard.BackgroundColor3 = COLORS.Surface
@@ -241,42 +269,22 @@ local function applyTheme(themeName)
         if metalInfo then metalInfo.TextColor3 = COLORS.TextDim end
     end
     
-    -- Card ESP
+    local realJumpCard = main:FindFirstChild("RealJumpCard")
+    if realJumpCard then
+        realJumpCard.BackgroundColor3 = COLORS.Surface
+        local realJumpTitle = realJumpCard:FindFirstChild("RealJumpTitle")
+        if realJumpTitle then realJumpTitle.TextColor3 = COLORS.Primary end
+        local realJumpInfo = realJumpCard:FindFirstChild("RealJumpInfo")
+        if realJumpInfo then realJumpInfo.TextColor3 = COLORS.TextDim end
+    end
+    
     local espCard = main:FindFirstChild("ESPCard")
     if espCard then
         espCard.BackgroundColor3 = COLORS.Surface
         local espTitle = espCard:FindFirstChild("ESPTitle")
         if espTitle then espTitle.TextColor3 = COLORS.Primary end
-        
-        -- Labels de texto
-        for _, label in ipairs(espCard:GetChildren()) do
-            if label:IsA("TextLabel") and label.Name:find("Label$") then
-                label.TextColor3 = COLORS.TextDim
-            end
-        end
-        
-        -- Botões de toggle
-        local toggleBtns = {"BoxToggleBtn", "TextToggleBtn", "DistToggleBtn"}
-        for _, btnName in ipairs(toggleBtns) do
-            local btn = espCard:FindFirstChild(btnName)
-            if btn then
-                btn.BorderColor3 = COLORS.Primary
-                btn.TextColor3 = COLORS.Text
-                -- A cor de fundo é definida pelo estado (ON/OFF), então não alteramos aqui
-            end
-        end
-        
-        -- Botões de cor e frames de cor
-        local colorFrames = {"BoxColorFrame", "TextColorFrame"}
-        for _, frameName in ipairs(colorFrames) do
-            local frame = espCard:FindFirstChild(frameName)
-            if frame then
-                -- a cor do frame é a cor atual do ESP, não muda com tema
-            end
-        end
     end
     
-    -- Card Tema
     local themeCard = main:FindFirstChild("ThemeCard")
     if themeCard then
         themeCard.BackgroundColor3 = COLORS.Surface
@@ -298,9 +306,55 @@ local function applyTheme(themeName)
         end
     end
     
-    -- Botão fechar
-    if uiElements.CloseBtn then
-        uiElements.CloseBtn.BackgroundColor3 = COLORS.Primary
+    if uiElements.ChangeBtn then uiElements.ChangeBtn.BackgroundColor3 = COLORS.Primary end
+    if uiElements.ResetBtn then
+        uiElements.ResetBtn.BorderColor3 = COLORS.Primary
+        uiElements.ResetBtn.BackgroundColor3 = COLORS.Surface
+        uiElements.ResetBtn.TextColor3 = COLORS.Text
+    end
+    if uiElements.ActivateBtn then uiElements.ActivateBtn.BackgroundColor3 = COLORS.Primary end
+    if uiElements.MetalToggleBtn then
+        uiElements.MetalToggleBtn.BorderColor3 = COLORS.Primary
+        uiElements.MetalToggleBtn.BackgroundColor3 = CONFIG.MetalSkin.Enabled and COLORS.Accent or COLORS.Surface
+        uiElements.MetalToggleBtn.TextColor3 = COLORS.Text
+    end
+    if uiElements.RealJumpToggleBtn then
+        uiElements.RealJumpToggleBtn.BorderColor3 = COLORS.Primary
+        uiElements.RealJumpToggleBtn.BackgroundColor3 = CONFIG.RealJump.Enabled and COLORS.Accent or COLORS.Surface
+        uiElements.RealJumpToggleBtn.TextColor3 = COLORS.Text
+    end
+    if uiElements.CooldownLabel then uiElements.CooldownLabel.TextColor3 = COLORS.TextDim end
+    if uiElements.CooldownValue then uiElements.CooldownValue.TextColor3 = COLORS.Text end
+    if uiElements.CooldownBtns then
+        for _, btn in ipairs(uiElements.CooldownBtns) do
+            btn.BackgroundColor3 = COLORS.Primary
+            btn.TextColor3 = COLORS.Text
+        end
+    end
+    if uiElements.RealJumpCooldownLabel then uiElements.RealJumpCooldownLabel.TextColor3 = COLORS.TextDim end
+    if uiElements.RealJumpCooldownValue then uiElements.RealJumpCooldownValue.TextColor3 = COLORS.Text end
+    if uiElements.RealJumpCooldownBtns then
+        for _, btn in ipairs(uiElements.RealJumpCooldownBtns) do
+            btn.BackgroundColor3 = COLORS.Primary
+            btn.TextColor3 = COLORS.Text
+        end
+    end
+    if uiElements.CloseBtn then uiElements.CloseBtn.BackgroundColor3 = COLORS.Primary end
+    
+    if uiElements.BoxToggleBtn then
+        uiElements.BoxToggleBtn.BorderColor3 = COLORS.Primary
+        uiElements.BoxToggleBtn.BackgroundColor3 = CONFIG.ESP.Box.Enabled and COLORS.Accent or COLORS.Surface
+        uiElements.BoxToggleBtn.TextColor3 = COLORS.Text
+    end
+    if uiElements.TextToggleBtn then
+        uiElements.TextToggleBtn.BorderColor3 = COLORS.Primary
+        uiElements.TextToggleBtn.BackgroundColor3 = CONFIG.ESP.Text.Enabled and COLORS.Accent or COLORS.Surface
+        uiElements.TextToggleBtn.TextColor3 = COLORS.Text
+    end
+    if uiElements.DistToggleBtn then
+        uiElements.DistToggleBtn.BorderColor3 = COLORS.Primary
+        uiElements.DistToggleBtn.BackgroundColor3 = CONFIG.ESP.Text.ShowDistance and COLORS.Accent or COLORS.Surface
+        uiElements.DistToggleBtn.TextColor3 = COLORS.Text
     end
 end
 
@@ -309,11 +363,9 @@ local function createTextESP(plr)
     if not plr.Character then return false end
     local head = plr.Character:FindFirstChild("Head")
     if not head then return false end
-
     if espTextLabels[plr] and espTextLabels[plr].billboard then
         pcall(function() espTextLabels[plr].billboard:Destroy() end)
     end
-
     local billboard = Instance.new("BillboardGui")
     billboard.Name = "ESP_Text"
     billboard.Adornee = head
@@ -322,7 +374,6 @@ local function createTextESP(plr)
     billboard.AlwaysOnTop = true
     billboard.Enabled = CONFIG.ESP.Text.Enabled
     billboard.Parent = head
-
     local nameLabel = Instance.new("TextLabel")
     nameLabel.Size = UDim2.new(1, 0, 0.5, 0)
     nameLabel.Position = UDim2.new(0, 0, 0, 0)
@@ -332,7 +383,6 @@ local function createTextESP(plr)
     nameLabel.TextScaled = true
     nameLabel.Font = Enum.Font.GothamBold
     nameLabel.Parent = billboard
-
     local distLabel = Instance.new("TextLabel")
     distLabel.Size = UDim2.new(1, 0, 0.5, 0)
     distLabel.Position = UDim2.new(0, 0, 0.5, 0)
@@ -342,7 +392,6 @@ local function createTextESP(plr)
     distLabel.TextScaled = true
     distLabel.Font = Enum.Font.Gotham
     distLabel.Parent = billboard
-
     espTextLabels[plr] = {billboard = billboard, nameLabel = nameLabel, distLabel = distLabel}
     return true
 end
@@ -438,8 +487,8 @@ end
 local function buildUI()
     local main = Instance.new("Frame")
     main.Name = "MainFrame"
-    main.Size = UDim2.new(0, 480, 0, 620)  -- maior para acomodar os elementos com folga
-    main.Position = UDim2.new(0.5, -240, 0.5, -310)
+    main.Size = UDim2.new(0, 550, 0, 750)
+    main.Position = UDim2.new(0.5, -275, 0.5, -375)
     main.BackgroundColor3 = COLORS.Background
     main.BorderSizePixel = 0
     main.Visible = uiOpen
@@ -480,10 +529,10 @@ local function buildUI()
     line1.BorderSizePixel = 0
     line1.Parent = main
 
-    -- ===== CARD EXTRA HIT (mais espaçoso) =====
+    -- CARD EXTRA HIT
     local extraCard = Instance.new("Frame")
     extraCard.Name = "ExtraCard"
-    extraCard.Size = UDim2.new(0.9, 0, 0, 160)
+    extraCard.Size = UDim2.new(0.9, 0, 0, 180)
     extraCard.Position = UDim2.new(0.05, 0, 0, 60)
     extraCard.BackgroundColor3 = COLORS.Surface
     extraCard.BorderSizePixel = 0
@@ -527,7 +576,6 @@ local function buildUI()
     keyValue.Font = Enum.Font.GothamBold
     keyValue.Parent = extraCard
 
-    -- Linha de botões (TROCAR, RESETAR, ATIVAR)
     local btnRow1 = Instance.new("Frame")
     btnRow1.Name = "BtnRow1"
     btnRow1.Size = UDim2.new(1, -20, 0, 35)
@@ -602,11 +650,11 @@ local function buildUI()
         TweenService:Create(activateBtn, TweenInfo.new(0.2), {BackgroundColor3 = COLORS.Primary}):Play()
     end)
 
-    -- Área do cooldown (mais espaçosa)
+    -- Área de cooldown do Extra Hit
     local cooldownArea = Instance.new("Frame")
     cooldownArea.Name = "CooldownArea"
     cooldownArea.Size = UDim2.new(1, -20, 0, 40)
-    cooldownArea.Position = UDim2.new(0, 10, 0, 122)
+    cooldownArea.Position = UDim2.new(0, 10, 0, 132)
     cooldownArea.BackgroundTransparency = 1
     cooldownArea.Parent = extraCard
 
@@ -672,11 +720,11 @@ local function buildUI()
         cooldownValue.Text = tostring(CONFIG.ExtraHit.Cooldown)
     end)
 
-    -- ===== CARD METAL SKIN =====
+    -- CARD METAL SKIN
     local metalCard = Instance.new("Frame")
     metalCard.Name = "MetalCard"
-    metalCard.Size = UDim2.new(0.9, 0, 0, 60)
-    metalCard.Position = UDim2.new(0.05, 0, 0, 230)
+    metalCard.Size = UDim2.new(0.9, 0, 0, 80)
+    metalCard.Position = UDim2.new(0.05, 0, 0, 250)
     metalCard.BackgroundColor3 = COLORS.Surface
     metalCard.BorderSizePixel = 0
     local metalCorner = Instance.new("UICorner")
@@ -698,7 +746,7 @@ local function buildUI()
 
     local metalInfo = Instance.new("TextLabel")
     metalInfo.Name = "MetalInfo"
-    metalInfo.Size = UDim2.new(1, -15, 0, 20)
+    metalInfo.Size = UDim2.new(0.5, -5, 0, 20)
     metalInfo.Position = UDim2.new(0, 8, 0, 32)
     metalInfo.BackgroundTransparency = 1
     metalInfo.Text = "Tecla R (cooldown 2s)"
@@ -708,11 +756,149 @@ local function buildUI()
     metalInfo.Font = Enum.Font.Gotham
     metalInfo.Parent = metalCard
 
-    -- ===== CARD ESP =====
+    local metalToggleBtn = Instance.new("TextButton")
+    metalToggleBtn.Name = "MetalToggleBtn"
+    metalToggleBtn.Size = UDim2.new(0, 50, 0, 30)
+    metalToggleBtn.Position = UDim2.new(1, -60, 0, 30)
+    metalToggleBtn.BackgroundColor3 = CONFIG.MetalSkin.Enabled and COLORS.Accent or COLORS.Surface
+    metalToggleBtn.Text = CONFIG.MetalSkin.Enabled and "ON" or "OFF"
+    metalToggleBtn.TextColor3 = COLORS.Text
+    metalToggleBtn.TextScaled = true
+    metalToggleBtn.Font = Enum.Font.GothamBold
+    metalToggleBtn.BorderSizePixel = 1
+    metalToggleBtn.BorderColor3 = COLORS.Primary
+    local metalToggleCorner = Instance.new("UICorner")
+    metalToggleCorner.CornerRadius = UDim.new(0, 5)
+    metalToggleCorner.Parent = metalToggleBtn
+    metalToggleBtn.Parent = metalCard
+
+    -- CARD REAL JUMP (agora com Alt)
+    local realJumpCard = Instance.new("Frame")
+    realJumpCard.Name = "RealJumpCard"
+    realJumpCard.Size = UDim2.new(0.9, 0, 0, 110)
+    realJumpCard.Position = UDim2.new(0.05, 0, 0, 340)
+    realJumpCard.BackgroundColor3 = COLORS.Surface
+    realJumpCard.BorderSizePixel = 0
+    local realJumpCorner = Instance.new("UICorner")
+    realJumpCorner.CornerRadius = UDim.new(0, 10)
+    realJumpCorner.Parent = realJumpCard
+    realJumpCard.Parent = main
+
+    local realJumpTitle = Instance.new("TextLabel")
+    realJumpTitle.Name = "RealJumpTitle"
+    realJumpTitle.Size = UDim2.new(1, -15, 0, 25)
+    realJumpTitle.Position = UDim2.new(0, 8, 0, 5)
+    realJumpTitle.BackgroundTransparency = 1
+    realJumpTitle.Text = "#### REAL JUMP (Infinito)"
+    realJumpTitle.TextColor3 = COLORS.Primary
+    realJumpTitle.TextXAlignment = Enum.TextXAlignment.Left
+    realJumpTitle.TextScaled = true
+    realJumpTitle.Font = Enum.Font.GothamBold
+    realJumpTitle.Parent = realJumpCard
+
+    local realJumpInfo = Instance.new("TextLabel")
+    realJumpInfo.Name = "RealJumpInfo"
+    realJumpInfo.Size = UDim2.new(0.5, -5, 0, 20)
+    realJumpInfo.Position = UDim2.new(0, 8, 0, 32)
+    realJumpInfo.BackgroundTransparency = 1
+    realJumpInfo.Text = "Tecla: ALT"
+    realJumpInfo.TextColor3 = COLORS.TextDim
+    realJumpInfo.TextXAlignment = Enum.TextXAlignment.Left
+    realJumpInfo.TextScaled = true
+    realJumpInfo.Font = Enum.Font.Gotham
+    realJumpInfo.Parent = realJumpCard
+
+    local realJumpToggleBtn = Instance.new("TextButton")
+    realJumpToggleBtn.Name = "RealJumpToggleBtn"
+    realJumpToggleBtn.Size = UDim2.new(0, 50, 0, 30)
+    realJumpToggleBtn.Position = UDim2.new(1, -60, 0, 30)
+    realJumpToggleBtn.BackgroundColor3 = CONFIG.RealJump.Enabled and COLORS.Accent or COLORS.Surface
+    realJumpToggleBtn.Text = CONFIG.RealJump.Enabled and "ON" or "OFF"
+    realJumpToggleBtn.TextColor3 = COLORS.Text
+    realJumpToggleBtn.TextScaled = true
+    realJumpToggleBtn.Font = Enum.Font.GothamBold
+    realJumpToggleBtn.BorderSizePixel = 1
+    realJumpToggleBtn.BorderColor3 = COLORS.Primary
+    local realJumpToggleCorner = Instance.new("UICorner")
+    realJumpToggleCorner.CornerRadius = UDim.new(0, 5)
+    realJumpToggleCorner.Parent = realJumpToggleBtn
+    realJumpToggleBtn.Parent = realJumpCard
+
+    -- Área de cooldown do Real Jump
+    local realJumpCooldownArea = Instance.new("Frame")
+    realJumpCooldownArea.Name = "RealJumpCooldownArea"
+    realJumpCooldownArea.Size = UDim2.new(1, -20, 0, 30)
+    realJumpCooldownArea.Position = UDim2.new(0, 10, 0, 70)
+    realJumpCooldownArea.BackgroundTransparency = 1
+    realJumpCooldownArea.Parent = realJumpCard
+
+    local realJumpCooldownLabel = Instance.new("TextLabel")
+    realJumpCooldownLabel.Name = "RealJumpCooldownLabel"
+    realJumpCooldownLabel.Size = UDim2.new(0, 80, 0, 30)
+    realJumpCooldownLabel.Position = UDim2.new(0, 0, 0, 0)
+    realJumpCooldownLabel.BackgroundTransparency = 1
+    realJumpCooldownLabel.Text = "Cooldown:"
+    realJumpCooldownLabel.TextColor3 = COLORS.TextDim
+    realJumpCooldownLabel.TextScaled = true
+    realJumpCooldownLabel.Font = Enum.Font.Gotham
+    realJumpCooldownLabel.Parent = realJumpCooldownArea
+
+    local realJumpCooldownValue = Instance.new("TextLabel")
+    realJumpCooldownValue.Name = "RealJumpCooldownValue"
+    realJumpCooldownValue.Size = UDim2.new(0, 50, 0, 30)
+    realJumpCooldownValue.Position = UDim2.new(0, 260, 0, 0)
+    realJumpCooldownValue.BackgroundTransparency = 1
+    realJumpCooldownValue.Text = tostring(CONFIG.RealJump.Cooldown)
+    realJumpCooldownValue.TextColor3 = COLORS.Text
+    realJumpCooldownValue.TextScaled = true
+    realJumpCooldownValue.Font = Enum.Font.GothamBold
+    realJumpCooldownValue.Parent = realJumpCooldownArea
+
+    local realJumpBtnMinus = Instance.new("TextButton")
+    realJumpBtnMinus.Size = UDim2.new(0, 30, 0, 30)
+    realJumpBtnMinus.Position = UDim2.new(0, 220, 0, 0)
+    realJumpBtnMinus.BackgroundColor3 = COLORS.Primary
+    realJumpBtnMinus.Text = "-"
+    realJumpBtnMinus.TextColor3 = COLORS.Text
+    realJumpBtnMinus.TextScaled = true
+    realJumpBtnMinus.Font = Enum.Font.GothamBold
+    realJumpBtnMinus.BorderSizePixel = 0
+    local realJumpMinusCorner = Instance.new("UICorner")
+    realJumpMinusCorner.CornerRadius = UDim.new(0, 5)
+    realJumpMinusCorner.Parent = realJumpBtnMinus
+    realJumpBtnMinus.Parent = realJumpCooldownArea
+
+    realJumpBtnMinus.MouseButton1Click:Connect(function()
+        local new = math.max(0, CONFIG.RealJump.Cooldown - 0.1)
+        CONFIG.RealJump.Cooldown = tonumber(string.format("%.1f", new))
+        realJumpCooldownValue.Text = tostring(CONFIG.RealJump.Cooldown)
+    end)
+
+    local realJumpBtnPlus = Instance.new("TextButton")
+    realJumpBtnPlus.Size = UDim2.new(0, 30, 0, 30)
+    realJumpBtnPlus.Position = UDim2.new(0, 300, 0, 0)
+    realJumpBtnPlus.BackgroundColor3 = COLORS.Primary
+    realJumpBtnPlus.Text = "+"
+    realJumpBtnPlus.TextColor3 = COLORS.Text
+    realJumpBtnPlus.TextScaled = true
+    realJumpBtnPlus.Font = Enum.Font.GothamBold
+    realJumpBtnPlus.BorderSizePixel = 0
+    local realJumpPlusCorner = Instance.new("UICorner")
+    realJumpPlusCorner.CornerRadius = UDim.new(0, 5)
+    realJumpPlusCorner.Parent = realJumpBtnPlus
+    realJumpBtnPlus.Parent = realJumpCooldownArea
+
+    realJumpBtnPlus.MouseButton1Click:Connect(function()
+        local new = CONFIG.RealJump.Cooldown + 0.1
+        CONFIG.RealJump.Cooldown = tonumber(string.format("%.1f", new))
+        realJumpCooldownValue.Text = tostring(CONFIG.RealJump.Cooldown)
+    end)
+
+    -- CARD ESP
     local espCard = Instance.new("Frame")
     espCard.Name = "ESPCard"
     espCard.Size = UDim2.new(0.9, 0, 0, 190)
-    espCard.Position = UDim2.new(0.05, 0, 0, 300)
+    espCard.Position = UDim2.new(0.05, 0, 0, 460)
     espCard.BackgroundColor3 = COLORS.Surface
     espCard.BorderSizePixel = 0
     local espCorner = Instance.new("UICorner")
@@ -725,14 +911,14 @@ local function buildUI()
     espTitle.Size = UDim2.new(1, -15, 0, 25)
     espTitle.Position = UDim2.new(0, 8, 0, 5)
     espTitle.BackgroundTransparency = 1
-    espTitle.Text = "#### ESP"
+    espTitle.Text = "##### ESP"
     espTitle.TextColor3 = COLORS.Primary
     espTitle.TextXAlignment = Enum.TextXAlignment.Left
     espTitle.TextScaled = true
     espTitle.Font = Enum.Font.GothamBold
     espTitle.Parent = espCard
 
-    -- Linha 1: Caixa colorida
+    -- Caixa colorida
     local boxLabel = Instance.new("TextLabel")
     boxLabel.Name = "BoxLabel"
     boxLabel.Size = UDim2.new(0.5, -5, 0, 25)
@@ -784,7 +970,7 @@ local function buildUI()
     boxColorBtn.BorderSizePixel = 0
     boxColorBtn.Parent = espCard
 
-    -- Linha 2: Texto (nome)
+    -- Texto (nome)
     local textLabel = Instance.new("TextLabel")
     textLabel.Name = "TextLabel"
     textLabel.Size = UDim2.new(0.5, -5, 0, 25)
@@ -836,7 +1022,7 @@ local function buildUI()
     textColorBtn.BorderSizePixel = 0
     textColorBtn.Parent = espCard
 
-    -- Linha 3: Mostrar distância
+    -- Mostrar distância
     local distLabel = Instance.new("TextLabel")
     distLabel.Name = "DistLabel"
     distLabel.Size = UDim2.new(0.5, -5, 0, 25)
@@ -865,18 +1051,11 @@ local function buildUI()
     distToggleCorner.Parent = distToggleBtn
     distToggleBtn.Parent = espCard
 
-    -- Linha extra para dar espaçamento
-    local espSpacer = Instance.new("Frame")
-    espSpacer.Size = UDim2.new(1, 0, 0, 10)
-    espSpacer.Position = UDim2.new(0, 0, 0, 135)
-    espSpacer.BackgroundTransparency = 1
-    espSpacer.Parent = espCard
-
-    -- ===== CARD TEMA =====
+    -- CARD TEMA
     local themeCard = Instance.new("Frame")
     themeCard.Name = "ThemeCard"
     themeCard.Size = UDim2.new(0.9, 0, 0, 70)
-    themeCard.Position = UDim2.new(0.05, 0, 0, 500)
+    themeCard.Position = UDim2.new(0.05, 0, 0, 660)
     themeCard.BackgroundColor3 = COLORS.Surface
     themeCard.BorderSizePixel = 0
     local themeCorner = Instance.new("UICorner")
@@ -889,7 +1068,7 @@ local function buildUI()
     themeTitle.Size = UDim2.new(1, -15, 0, 25)
     themeTitle.Position = UDim2.new(0, 8, 0, 5)
     themeTitle.BackgroundTransparency = 1
-    themeTitle.Text = "##### TEMA"
+    themeTitle.Text = "###### TEMA"
     themeTitle.TextColor3 = COLORS.Primary
     themeTitle.TextXAlignment = Enum.TextXAlignment.Left
     themeTitle.TextScaled = true
@@ -912,7 +1091,7 @@ local function buildUI()
     themeDropdown.Parent = themeCard
 
     local themeOptions = {}
-    local options = {"Vinho", "Azul", "Verde", "Roxo"}
+    local options = {"Vinho", "Azul", "Verde", "Roxo", "Branco"}
     for i, opt in ipairs(options) do
         local btn = Instance.new("TextButton")
         btn.Name = "ThemeBtn_"..opt
@@ -944,7 +1123,6 @@ local function buildUI()
         end
     end)
 
-    -- Botão fechar
     local closeBtn = Instance.new("TextButton")
     closeBtn.Name = "CloseBtn"
     closeBtn.Size = UDim2.new(0, 25, 0, 25)
@@ -973,6 +1151,14 @@ local function buildUI()
         ChangeBtn = changeBtn,
         ResetBtn = resetBtn,
         ActivateBtn = activateBtn,
+        MetalToggleBtn = metalToggleBtn,
+        RealJumpToggleBtn = realJumpToggleBtn,
+        CooldownLabel = cooldownLabel,
+        CooldownValue = cooldownValue,
+        CooldownBtns = {btnMinus, btnPlus},
+        RealJumpCooldownLabel = realJumpCooldownLabel,
+        RealJumpCooldownValue = realJumpCooldownValue,
+        RealJumpCooldownBtns = {realJumpBtnMinus, realJumpBtnPlus},
         BoxToggleBtn = boxToggleBtn,
         BoxColorBtn = boxColorBtn,
         BoxColorFrame = boxColorFrame,
@@ -983,58 +1169,32 @@ local function buildUI()
         CloseBtn = closeBtn,
         ThemeDropdown = themeDropdown,
         ThemeOptions = themeOptions,
-        CooldownValue = cooldownValue,
     }
-end
-
--- ==================== FUNÇÕES DE CONTROLE ====================
-local function startKeyChange()
-    keyChangeMode = true
-    uiElements.KeyValue.Text = "Pressione uma tecla..."
-    uiElements.KeyValue.TextColor3 = COLORS.Accent
-
-    local connection
-    connection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
-        if gameProcessed then return end
-        if input.KeyCode == CONFIG.ToggleKey then return end
-        if not CONFIG.AllowMouseButtons and input.UserInputType ~= Enum.UserInputType.Keyboard then return end
-
-        if input.UserInputType == Enum.UserInputType.Keyboard then
-            selectedKey = input.KeyCode
-        elseif input.UserInputType == Enum.UserInputType.MouseButton1 or
-               input.UserInputType == Enum.UserInputType.MouseButton2 or
-               input.UserInputType == Enum.UserInputType.MouseButton3 or
-               input.UserInputType == Enum.UserInputType.MouseButton4 or
-               input.UserInputType == Enum.UserInputType.MouseButton5 then
-            selectedKey = input.UserInputType
-        else
-            return
-        end
-
-        updateKeyDisplay()
-        keyChangeMode = false
-        connection:Disconnect()
-    end)
 end
 
 -- ==================== CONEXÕES DA UI ====================
 local function setupUIEvents()
     uiElements.ChangeBtn.MouseButton1Click:Connect(startKeyChange)
-
     uiElements.ResetBtn.MouseButton1Click:Connect(function()
         selectedKey = nil
         updateKeyDisplay()
     end)
+    uiElements.ActivateBtn.MouseButton1Click:Connect(sendExtraHit)
 
-    uiElements.ActivateBtn.MouseButton1Click:Connect(function()
-        sendExtraHit()
+    uiElements.MetalToggleBtn.MouseButton1Click:Connect(function()
+        toggleMetalSkin()
+    end)
+
+    uiElements.RealJumpToggleBtn.MouseButton1Click:Connect(function()
+        CONFIG.RealJump.Enabled = not CONFIG.RealJump.Enabled
+        uiElements.RealJumpToggleBtn.Text = CONFIG.RealJump.Enabled and "ON" or "OFF"
+        uiElements.RealJumpToggleBtn.BackgroundColor3 = CONFIG.RealJump.Enabled and COLORS.Accent or COLORS.Surface
     end)
 
     uiElements.BoxToggleBtn.MouseButton1Click:Connect(function()
         CONFIG.ESP.Box.Enabled = not CONFIG.ESP.Box.Enabled
         uiElements.BoxToggleBtn.Text = CONFIG.ESP.Box.Enabled and "ON" or "OFF"
         uiElements.BoxToggleBtn.BackgroundColor3 = CONFIG.ESP.Box.Enabled and COLORS.Accent or COLORS.Surface
-        
         if CONFIG.ESP.Box.Enabled then
             for _, plr in ipairs(Players:GetPlayers()) do
                 if plr ~= player then createBoxESP(plr) end
@@ -1047,22 +1207,17 @@ local function setupUIEvents()
         end
     end)
 
-    -- Cores da caixa (incluindo roxo)
     local boxColors = {
-        Color3.fromRGB(255, 50, 50),   -- vermelho
-        Color3.fromRGB(50, 255, 50),   -- verde
-        Color3.fromRGB(50, 50, 255),   -- azul
-        Color3.fromRGB(255, 255, 50),  -- amarelo
-        Color3.fromRGB(150, 0, 255),   -- roxo (novo)
+        Color3.fromRGB(255, 50, 50),
+        Color3.fromRGB(50, 255, 50),
+        Color3.fromRGB(50, 50, 255),
+        Color3.fromRGB(255, 255, 50),
+        Color3.fromRGB(150, 0, 255),
     }
     local boxColorIndex = 1
     for i, color in ipairs(boxColors) do
-        if color == CONFIG.ESP.Box.Color then
-            boxColorIndex = i
-            break
-        end
+        if color == CONFIG.ESP.Box.Color then boxColorIndex = i; break end
     end
-
     uiElements.BoxColorBtn.MouseButton1Click:Connect(function()
         boxColorIndex = boxColorIndex % #boxColors + 1
         CONFIG.ESP.Box.Color = boxColors[boxColorIndex]
@@ -1074,7 +1229,6 @@ local function setupUIEvents()
         CONFIG.ESP.Text.Enabled = not CONFIG.ESP.Text.Enabled
         uiElements.TextToggleBtn.Text = CONFIG.ESP.Text.Enabled and "ON" or "OFF"
         uiElements.TextToggleBtn.BackgroundColor3 = CONFIG.ESP.Text.Enabled and COLORS.Accent or COLORS.Surface
-        
         if CONFIG.ESP.Text.Enabled then
             for _, plr in ipairs(Players:GetPlayers()) do
                 if plr ~= player then createTextESP(plr) end
@@ -1087,20 +1241,16 @@ local function setupUIEvents()
     end)
 
     local textColors = {
-        Color3.fromRGB(255, 255, 255),  -- branco
-        Color3.fromRGB(255, 50, 50),    -- vermelho
-        Color3.fromRGB(50, 255, 50),    -- verde
-        Color3.fromRGB(50, 50, 255),    -- azul
-        Color3.fromRGB(150, 0, 255),    -- roxo
+        Color3.fromRGB(255, 255, 255),
+        Color3.fromRGB(255, 50, 50),
+        Color3.fromRGB(50, 255, 50),
+        Color3.fromRGB(50, 50, 255),
+        Color3.fromRGB(150, 0, 255),
     }
     local textColorIndex = 1
     for i, color in ipairs(textColors) do
-        if color == CONFIG.ESP.Text.Color then
-            textColorIndex = i
-            break
-        end
+        if color == CONFIG.ESP.Text.Color then textColorIndex = i; break end
     end
-
     uiElements.TextColorBtn.MouseButton1Click:Connect(function()
         textColorIndex = textColorIndex % #textColors + 1
         CONFIG.ESP.Text.Color = textColors[textColorIndex]
@@ -1119,10 +1269,9 @@ local function setupUIEvents()
         uiElements.MainFrame.Visible = false
     end)
 
-    -- Arrastar
+    -- Arrastar a interface
     local dragging = false
     local dragInput, dragStart, startPos
-
     uiElements.MainFrame.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             dragging = true
@@ -1135,13 +1284,11 @@ local function setupUIEvents()
             end)
         end
     end)
-
     uiElements.MainFrame.InputChanged:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseMovement then
             dragInput = input
         end
     end)
-
     UserInputService.InputChanged:Connect(function(input)
         if input == dragInput and dragging then
             local delta = input.Position - dragStart
@@ -1163,16 +1310,27 @@ updateKeyDisplay()
 -- Input global
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
+    
+    -- Tecla P para toggle
     if input.KeyCode == CONFIG.ToggleKey then
         uiOpen = not uiOpen
         if uiElements.MainFrame then uiElements.MainFrame.Visible = uiOpen end
         return
     end
+    
+    -- Prioridade: modo de troca do extra hit
+    if keyChangeModeExtra then
+        return
+    end
+    
+    -- Metal Skin (tecla R)
     if input.KeyCode == CONFIG.MetalSkin.Key then
         toggleMetalSkin()
         return
     end
-    if not keyChangeMode and selectedKey then
+    
+    -- Extra hit
+    if selectedKey then
         local match = false
         if typeof(selectedKey) == "EnumItem" then
             if selectedKey.EnumType == Enum.KeyCode then
@@ -1182,6 +1340,11 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
             end
         end
         if match then sendExtraHit() end
+    end
+    
+    -- Real Jump (tecla Alt)
+    if CONFIG.RealJump.Enabled and (input.KeyCode == Enum.KeyCode.LeftAlt or input.KeyCode == Enum.KeyCode.RightAlt) then
+        doRealJump()
     end
 end)
 
